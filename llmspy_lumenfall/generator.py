@@ -72,6 +72,17 @@ def _extract_images_from_content(content_parts):
     return images
 
 
+def _model_supports_image_input(model_id):
+    """Check if the model supports image input (editing) via the catalog."""
+    from .models import get_models
+
+    models = get_models()
+    model_info = models.get(model_id)
+    if not model_info:
+        return True  # unknown model — let the API decide
+    return "image" in model_info.get("modalities", {}).get("input", [])
+
+
 def extract_user_images(chat):
     """Extract input images for editing from chat messages.
 
@@ -83,11 +94,14 @@ def extract_user_images(chat):
     user-attached). If no images are found from either source, returns an
     empty list which routes to /images/generations.
 
-    Returns a list of (media_type, base64_data) tuples.
+    Returns (images, has_user_attached) where images is a list of
+    (media_type, base64_data) tuples and has_user_attached indicates whether
+    any images came from the user's message (not just assistant output).
     """
     messages = chat.get("messages", [])
 
     images = []
+    has_user_attached = False
 
     # 1. Last assistant output image (for conversational editing)
     for msg in reversed(messages):
@@ -113,9 +127,10 @@ def extract_user_images(chat):
             extracted = _extract_images_from_content(content)
             if extracted:
                 images.extend(extracted)
+                has_user_attached = True
         break  # only check the last user message
 
-    return images
+    return images, has_user_attached
 
 
 class LumenfallImageGenerator(GeneratorBase):
@@ -151,8 +166,16 @@ class LumenfallImageGenerator(GeneratorBase):
         if not prompt:
             raise ValueError("No prompt found in chat messages")
 
-        user_images = extract_user_images(chat)
+        user_images, has_user_attached = extract_user_images(chat)
         headers = self.get_headers(provider, chat)
+
+        if user_images and not _model_supports_image_input(model):
+            if has_user_attached:
+                raise ValueError(
+                    f"Model '{model}' does not support image editing"
+                )
+            # Conversational context — fall back to generation
+            user_images = []
 
         if user_images:
             return await self._chat_edit(
