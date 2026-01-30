@@ -2,13 +2,14 @@
 Lumenfall extension for llmspy
 Lumenfall is an AI media generation gateway with a unified OpenAI-compatible API.
 
-Registers Lumenfall as an image generation provider in llmspy, giving users
-access to all top AI image models across all leading providers with a single API key.
+Registers Lumenfall as an image generation and editing provider in llmspy,
+giving users access to all top AI image models across all leading providers
+with a single API key.
 
 Architecture:
-- install() defines LumenfallImageGenerator inside the closure (needs ctx
-  for save_image_to_cache, last_user_prompt, etc.) and stores it as
-  _generator_factory for the provider to pick up.
+- install() creates a factory that injects ctx into LumenfallImageGenerator
+  (defined in generator.py) and stores it as _generator_factory for the
+  provider to pick up.
 - LumenfallProvider lives in provider.py (importable for tests) and wires
   the generator via _generator_factory in its __init__.
 - __load__ auto-registers into g_handlers for zero-config experience.
@@ -22,180 +23,31 @@ _generator_factory = None
 
 
 def install(ctx):
-    import base64
-    import json
     import os
-    import time
-
-    import aiohttp
-
-    from llms.main import GeneratorBase
 
     from .models import set_cache_dir
 
     cache_dir = os.path.join(os.path.expanduser("~"), ".llms", "cache")
     set_cache_dir(cache_dir)
 
-    # ------------------------------------------------------------------
-    # Image Generator (needs ctx closure)
-    # ------------------------------------------------------------------
-
-    class LumenfallImageGenerator(GeneratorBase):
-        """Image generator backed by Lumenfall's OpenAI-compatible API.
-
-        Extends GeneratorBase to implement:
-        - chat() — calls Lumenfall /images/generations
-        - to_response() — decodes images, caches to disk via
-          ctx.save_image_to_cache, returns message.images with /~cache/ paths
-        """
-
-        sdk = "llmspy_lumenfall/image"
-
-        def __init__(self, **kwargs):
-            super().__init__(**kwargs)
-            self.api = kwargs.get("api", "")
-            if not self.api.endswith("/images/generations"):
-                self.api = self.api.rstrip("/") + "/images/generations"
-
-        # -- API call -----------------------------------------------------
-
-        async def chat(self, chat, provider=None, context=None):
-            model = chat.get("model", "")
-            started_at = time.time()
-
-            prompt = ctx.last_user_prompt(chat)
-            if not prompt:
-                raise ValueError("No prompt found in chat messages")
-
-            aspect_ratio = ctx.chat_to_aspect_ratio(chat) or "1:1"
-
-            payload = {
-                "model": model,
-                "prompt": prompt,
-                "n": chat.get("n", 1),
-                "response_format": "b64_json",
-                "aspect_ratio": aspect_ratio,
-            }
-
-            headers = self.get_headers(provider, chat)
-
-            ctx.log(f"POST {self.api}")
-            ctx.log(json.dumps(payload, indent=2))
-
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    self.api,
-                    headers=headers,
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=120),
-                ) as response:
-                    text = await response.text()
-                    ctx.log(
-                        text[:1024] + ("..." if len(text) > 1024 else "")
-                    )
-
-                    if response.status == 401:
-                        raise PermissionError(
-                            "Unauthorized: Invalid API key. "
-                            "Check LUMENFALL_API_KEY environment variable."
-                        )
-                    if response.status == 404:
-                        raise ValueError(f"Model not found: {model}")
-                    if response.status >= 400:
-                        try:
-                            err = json.loads(text)
-                            msg = err.get("error", {}).get("message", text)
-                        except (ValueError, KeyError):
-                            msg = text
-                        raise RuntimeError(
-                            f"API error ({response.status}): {msg}"
-                        )
-
-                    return ctx.log_json(
-                        await self.to_response(
-                            json.loads(text), chat, started_at
-                        )
-                    )
-
-        # -- Response processing ------------------------------------------
-
-        async def to_response(self, response, chat, started_at, context=None):
-            """Decode images, cache to disk, return llmspy-format response.
-
-            The response must have message.images with /~cache/ URLs so
-            llmspy's CLI prints "Saved files:" with local paths.
-            """
-            if "error" in response:
-                raise RuntimeError(
-                    response["error"].get("message", str(response["error"]))
-                )
-
-            data = response.get("data")
-            if not data:
-                ctx.log(json.dumps(response, indent=2))
-                raise RuntimeError("No 'data' field in API response")
-
-            images = []
-            for i, item in enumerate(data):
-                b64_data = item.get("b64_json")
-                image_url = item.get("url")
-
-                ext = "png"
-                image_bytes = None
-
-                if b64_data:
-                    image_bytes = base64.b64decode(b64_data)
-                elif image_url:
-                    ctx.log(f"GET {image_url}")
-                    async with aiohttp.ClientSession() as dl_session:
-                        async with dl_session.get(image_url) as res:
-                            if res.status == 200:
-                                image_bytes = await res.read()
-                                ct = res.headers.get("Content-Type", "")
-                                if "jpeg" in ct or "jpg" in ct:
-                                    ext = "jpg"
-                                elif "webp" in ct:
-                                    ext = "webp"
-                            else:
-                                raise RuntimeError(
-                                    f"Failed to download image: "
-                                    f"HTTP {res.status}"
-                                )
-
-                if image_bytes:
-                    relative_url, _info = ctx.save_image_to_cache(
-                        image_bytes,
-                        f"{chat.get('model', 'image')}-{i}.{ext}",
-                        ctx.to_file_info(chat),
-                    )
-                    images.append({
-                        "type": "image_url",
-                        "image_url": {"url": relative_url},
-                    })
-                else:
-                    raise RuntimeError(
-                        f"No image data in response item {i}"
-                    )
-
-            return {
-                "choices": [{
-                    "message": {
-                        "role": "assistant",
-                        "content": self.default_content,
-                        "images": images,
-                    }
-                }]
-            }
-
     # -- Wire everything together -----------------------------------------
 
+    from .generator import LumenfallImageGenerator
+
+    # Create a ctx-bound subclass so add_provider can instantiate with **kwargs
+    class BoundGenerator(LumenfallImageGenerator):
+        def __init__(self, **kwargs):
+            super().__init__(ctx=ctx, **kwargs)
+
+    BoundGenerator.sdk = LumenfallImageGenerator.sdk
+
     global _generator_factory
-    _generator_factory = LumenfallImageGenerator
+    _generator_factory = BoundGenerator
 
     from .provider import LumenfallProvider
 
     ctx.add_provider(LumenfallProvider)
-    ctx.add_provider(LumenfallImageGenerator)
+    ctx.add_provider(BoundGenerator)
 
 
 async def load(ctx):
