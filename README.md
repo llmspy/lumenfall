@@ -89,13 +89,6 @@ Add Lumenfall to the `providers` section of `~/.llms/llms.json`:
 
 This step is required for the extension to work.
 
-### Environment variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `LUMENFALL_API_KEY` | Yes | Your Lumenfall API key (starts with `lmnfl_`) |
-| `LUMENFALL_BASE_URL` | No | Override API base URL (default: `https://api.lumenfall.ai/openai/v1`) |
-
 ## Usage
 
 ### Generate a single image
