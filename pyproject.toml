@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llmspy-lumenfall"
+version = "0.1.0"
+description = "Lumenfall extension for llmspy. Lumenfall is an AI media generation gateway with a unified OpenAI-compatible API."
+authors = [
+    {name = "Lumenfall", email = "support@lumenfall.ai"}
+]
+requires-python = ">=3.8"
+dependencies = [
+    "aiohttp>=3.9.0",
+    "llms-py>=3.0.20"
+]
+
+[tool.setuptools.package-data]
+llmspy_lumenfall = ["models.json"]
+
+[project.entry-points."llms"]
+"llmspy_lumenfall" = "llmspy_lumenfall:install"
