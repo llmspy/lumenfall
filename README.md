@@ -1,17 +1,31 @@
 # Lumenfall for llms.py
 
-[Lumenfall](https://lumenfall.ai) is an AI media gatway offering unified access to the top AI image models across all major providers.
+[Lumenfall](https://lumenfall.ai) is an AI media gateway offering unified access to the top AI image models across all major providers.
 
-[llms.py](https://github.com/ServiceStack/llms) is a lightweight CLI and web UI to access hundreds of AI models across many providers. It's out of the box support for image models is limited.
+[llms.py](https://github.com/ServiceStack/llms) is a lightweight CLI and web UI to access hundreds of AI models across many providers. Its out of the box support for image models is limited.
 
 With the Lumenfall extension, you can access all of our image models inside llms.py.
 
 ## Quick start
 
 ```bash
-pip install llms-py
 llms --add lumenfall-ai/llmspy-lumenfall
 export LUMENFALL_API_KEY=lmnfl_your_api_key
+```
+
+Add the provider to `~/.llms/llms.json`:
+
+```json
+{
+  "providers": {
+    "lumenfall": { "enabled": true, "npm": "llmspy_lumenfall" }
+  }
+}
+```
+
+Then generate an image:
+
+```bash
 llms --out image "A capybara relaxing in a hot spring" -m gemini-3-pro-image
 ```
 
@@ -19,7 +33,7 @@ Get your API key at [lumenfall.ai](https://lumenfall.ai) Dashboard - API Keys.
 
 ## How it works
 
-This extension registers Lumenfall as an image generation provider inside llmspy. When you set `LUMENFALL_API_KEY`, the extension auto-registers on startup - no `llms.json` config needed.
+This extension registers Lumenfall as an image generation provider inside llmspy. You need to add it to your `~/.llms/llms.json` providers and set the `LUMENFALL_API_KEY` environment variable.
 
 ```
 llms --out image "prompt" -m <any-lumenfall-model>
@@ -37,12 +51,6 @@ llms --add lumenfall-ai/llmspy-lumenfall
 
 This clones the extension into `~/.llms/extensions/` and installs Python dependencies automatically.
 
-### Via pip
-
-```bash
-pip install llmspy-lumenfall
-```
-
 ### Manual (development)
 
 ```bash
@@ -53,25 +61,33 @@ pip install -r llmspy-lumenfall/requirements.txt
 
 ## Configuration
 
-Set your API key as an environment variable:
+### 1. Set your API key
+
+The API key is configured via the `LUMENFALL_API_KEY` environment variable. To make it available in every shell session, add it to your shell profile:
 
 ```bash
-export LUMENFALL_API_KEY=lmnfl_your_api_key
+# Bash (~/.bashrc or ~/.bash_profile)
+echo 'export LUMENFALL_API_KEY="lmnfl_your_api_key"' >> ~/.bashrc
+source ~/.bashrc
+
+# Zsh (~/.zshrc)
+echo 'export LUMENFALL_API_KEY="lmnfl_your_api_key"' >> ~/.zshrc
+source ~/.zshrc
 ```
 
-That's it. The extension auto-registers when it detects the key. No `llms.json` entry required.
+### 2. Register the provider
 
-### Optional: explicit provider config
-
-If you prefer explicit configuration, add this to `~/.llms/llms.json`:
+Add Lumenfall to the `providers` section of `~/.llms/llms.json`:
 
 ```json
 {
   "providers": {
-    "lumenfall": { "enabled": true }
+    "lumenfall": { "enabled": true, "npm": "llmspy_lumenfall" }
   }
 }
 ```
+
+This step is required for the extension to work.
 
 ### Environment variables
 
@@ -88,33 +104,25 @@ If you prefer explicit configuration, add this to `~/.llms/llms.json`:
 llms --out image "A capybara wearing a tiny hat" -m gemini-3-pro-image
 ```
 
-### Generate multiple images
+## Edit images
+
+Image editing is also supported through Lumenfall.
 
 ```bash
-llms --out image "A capybara swimming in a hot spring" -m gpt-image-1.5 -n 2
+llms "Add a tiny sombrero to the capybara" -m gpt-image-1 --image photo.png
 ```
 
-### Get raw JSON response
+Even image editing models that usually can't be used in a conversational interface, like Seedream-4.5, can be used with turn based editing.
+
+## Web UI
+
+llms.py includes a built-in web UI where all Lumenfall functionality - image generation and editing - works the same as on the CLI. Start it with:
 
 ```bash
-llms --out image "A capybara riding a skateboard" -m flux.2-max --raw
+llms --server 8000
 ```
 
-### Set aspect ratio
-
-Add to `~/.llms/llms.json`:
-
-```json
-{
-  "defaults": {
-    "out:image": {
-      "image_config": { "aspect_ratio": "16:9" }
-    }
-  }
-}
-```
-
-Supported ratios: `1:1`, `16:9`, `9:16`, `4:3`, `3:4`, `21:9`
+Then open `http://localhost:8000` in your browser.
 
 ## Available models
 
@@ -125,32 +133,22 @@ For models that are available on other providers in llmspy, the first match is u
 
 ## Routing: avoiding model conflicts
 
-If you also use Google or OpenAI providers for text, restrict them to text models if you want all image models to be served by Lumenfall:
+llms.py uses the first matching provider for a given model. To ensure all image requests go through Lumenfall, list it **first** in your `providers` config - before any other providers that may also serve image models (e.g. Google, OpenAI, or OpenRouter):
 
 ```json
 {
   "providers": {
-    "google": {
-      "enabled": true,
-      "map_models": {
-        "gemini-2.5-flash": "gemini-2.5-flash",
-        "gemini-2.5-pro": "gemini-2.5-pro"
-      }
-    },
-    "openai": {
-      "enabled": true,
-      "map_models": {
-        "gpt-4.1": "gpt-4.1",
-        "gpt-4.1-mini": "gpt-4.1-mini",
-        "o4-mini": "o4-mini"
-      }
-    },
-    "lumenfall": { "enabled": true }
+    "lumenfall": { "enabled": true, "npm": "llmspy_lumenfall" },
+    "google": { ... },
+    "openai": { ... },
+    ...
   }
 }
 ```
 
-`map_models` whitelists which models a provider serves. By listing only text models for Google/OpenAI, all image models route through Lumenfall.
+## Known limitations
+
+- **Provider forcing not supported.** Lumenfall providers cannot be forced by prepending the provider in the model (e.g. `replicate/gemini-3-pro-image`) as usual.
 
 ### Project structure
 
